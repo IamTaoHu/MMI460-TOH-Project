@@ -8,8 +8,8 @@ class HanoiGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Tower of Hanoi - GUI (Drag & Drop)")
-        self.root.geometry("980x560")
-        self.root.minsize(880, 520)
+        self.root.geometry("1200x520")
+        self.root.minsize(1200, 520)
 
         # ---- Theme ----
         self.bg = "#0f0f13"
