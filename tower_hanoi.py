@@ -1,4 +1,4 @@
-import tkinter as tk
+﻿import tkinter as tk
 from tkinter import messagebox, filedialog, ttk
 import time
 import csv
@@ -46,6 +46,7 @@ class HanoiGUI:
         self.current_move_start_rel = None
         self.move_logs = []  # (start_rel, end_rel, from_peg(1-3), to_peg(1-3))
         self.completed_elapsed_ms = None
+        self.pressure_rating = None
         self.log_window = None
         self.log_text = None
 
@@ -187,6 +188,7 @@ class HanoiGUI:
         self.current_move_start_rel = None
         self.move_logs = []
         self.completed_elapsed_ms = None
+        self.pressure_rating = None
 
         # rebuild board
         self.canvas.delete("all")
@@ -242,6 +244,7 @@ class HanoiGUI:
             self.move_logs.append((now_ms, now_ms, "-", "GAMEOVER"))
             self._refresh_log_window()
 
+        self._capture_pressure_rating()
         messagebox.showerror("GAMEOVER", "หมดเวลาแล้ว!")
 
     # ---------- Drawing ----------
@@ -443,6 +446,7 @@ class HanoiGUI:
                 self.move_logs.append((now_ms, now_ms, "-", "Success!"))
                 self._refresh_log_window()
 
+            self._capture_pressure_rating()
             messagebox.showinfo("You win!", f"Great job! You solved it in {self.moves} moves.")
 
     # ---------- Move log ----------
@@ -497,6 +501,97 @@ class HanoiGUI:
         try: return bool(widget.winfo_exists())
         except Exception: return False
 
+    @staticmethod
+    def _format_elapsed_ms(ms):
+        try:
+            ms = int(ms)
+        except (TypeError, ValueError):
+            return ""
+        total_seconds = ms // 1000
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _latest_move_log_ms(self):
+        for entry in reversed(self.move_logs):
+            if isinstance(entry, tuple) and len(entry) >= 2:
+                end_ms = entry[1]
+                try:
+                    return int(end_ms)
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    def _capture_pressure_rating(self):
+        if self.pressure_rating is not None:
+            return
+        rating = self._prompt_pressure_rating()
+        if rating is not None:
+            self.pressure_rating = rating
+
+    def _prompt_pressure_rating(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Pressure Rating")
+        dialog.configure(bg=self.bg)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+        var = tk.IntVar(value=0)
+        options = [
+            (1, "Least stressful"),
+            (2, "Less stressful"),
+            (3, "Moderately stressful"),
+            (4, "High stressful"),
+            (5, "Highest stressful"),
+        ]
+        for value, label in options:
+            rb = tk.Radiobutton(dialog, text=f"{value}. {label}", variable=var, value=value,
+                                bg=self.bg, fg=self.fg, selectcolor=self.btn_bg,
+                                activebackground=self.btn_hover, activeforeground=self.fg,
+                                anchor="w", font=("Segoe UI", 11))
+            rb.pack(fill="x", padx=18, pady=4)
+        button_row = tk.Frame(dialog, bg=self.bg)
+        button_row.pack(fill="x", padx=18, pady=(8, 14))
+
+        dialog.result = None
+
+        def on_ok():
+            choice = var.get()
+            if choice == 0:
+                messagebox.showwarning("Select the answer before pressing the ,Okay button.")
+                return
+            dialog.result = choice
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.result = None
+            dialog.destroy()
+
+        cancel_btn = self._mk_btn(button_row, "Cancel", on_cancel)
+        cancel_btn.pack(side="right", padx=(0, 6))
+        ok_btn = self._mk_btn(button_row, "Okay", on_ok)
+        ok_btn.pack(side="right", padx=(6, 0))
+
+        dialog.protocol("WM_DELETE_WINDOW", on_cancel)
+        dialog.lift()
+        self.root.wait_window(dialog)
+        return dialog.result
+
+    def _get_time_spent_display(self, record):
+        existing = record.get("Time spent")
+        if existing:
+            return existing
+        raw_ms = record.get("Time spent(ms)")
+        if raw_ms in (None, ""):
+            return ""
+        formatted = self._format_elapsed_ms(raw_ms)
+        if formatted:
+            record["Time spent"] = formatted
+            return formatted
+        return str(raw_ms)
+
     # ---------- Save & Table ----------
     def _save_record(self):
         name = self.name_var.get().strip()
@@ -512,14 +607,24 @@ class HanoiGUI:
         elapsed_ms = 0
         if self.first_click_baseline is not None:
             elapsed_ms = self.completed_elapsed_ms if self.completed_elapsed_ms is not None else int((time.perf_counter() - self.first_click_baseline) * 1000)
+        log_ms = self._latest_move_log_ms()
+        if log_ms is not None:
+            time_spent_ms = log_ms
+        elif elapsed_ms:
+            time_spent_ms = int(elapsed_ms)
+        else:
+            time_spent_ms = 0
+        pressure_value = str(self.pressure_rating) if self.pressure_rating is not None else ""
         record = {
             "Name": name,
             "Num of Disc": self.num_discs,
             "Move": self.moves,
             "Breaking rules": self.rule_break_attempts,
+            "Pressure": pressure_value,
             "Timer": timer_set_str,
             "Remaining time": remaining_str,
-            "Time spent(ms)": str(int(elapsed_ms)),
+            "Time spent": self._format_elapsed_ms(time_spent_ms),
+            "Time spent(ms)": str(time_spent_ms),
         }
         self.records.append(record)
         messagebox.showinfo("Saved", "บันทึกข้อมูลเรียบร้อย")
@@ -530,16 +635,25 @@ class HanoiGUI:
             self.table_window = tk.Toplevel(self.root)
             self.table_window.title("Statistics")
             self.table_window.configure(bg=self.bg)
-            self.table_window.geometry("900x420")
+            self.table_window.geometry("1250x420")
             self.table_window.resizable(True, True)
             self.table_window.protocol("WM_DELETE_WINDOW", self._close_table_window)
 
-            columns = ("Name", "Num of Disc", "Move", "Breaking rules", "Timer", "Remaining time", "Time spent")
+            columns = ("Name", "Num of Disc", "Move", "Breaking rules", "Pressure", "Timer", "Remaining time", "Time spent", "Time spent (ms)")
             self.table_tree = ttk.Treeview(self.table_window, columns=columns, show="headings")
             for col in columns:
                 self.table_tree.heading(col, text=col)
-                width = 150 if col == "Name" else 130 if col == "Breaking rules" else 120
-                self.table_tree.column(col, anchor="center", width=width)
+                if col == "Name":
+                    width = 150
+                elif col == "Breaking rules":
+                    width = 130
+                elif col == "Pressure":
+                    width = 130
+                elif col == "Time spent (ms)":
+                    width = 140
+                else:
+                    width = 120
+                self.table_tree.column(col, anchor="center", width=width, stretch=False)
             self.table_tree.pack(fill="both", expand=True, padx=8, pady=(8,4))
 
             # Export buttons
@@ -572,9 +686,11 @@ class HanoiGUI:
                 rec.get("Num of Disc", ""),
                 rec.get("Move", ""),
                 rec.get("Breaking rules", 0),
+                rec.get("Pressure", ""),
                 rec.get("Timer", ""),
                 rec.get("Remaining time", ""),
-                rec.get("Time spent", "")
+                self._get_time_spent_display(rec),
+                rec.get("Time spent(ms)", "")
             ))
 
     def _export_csv(self):
@@ -588,16 +704,18 @@ class HanoiGUI:
             return
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["Name", "Num of Disc", "Move", "Breaking rules", "Timer", "Remaining time", "Time spent"])
+            writer.writerow(["Name", "Num of Disc", "Move", "Breaking rules", "Pressure", "Timer", "Remaining time", "Time spent", "Time spent (ms)"])
             for r in self.records:
                 writer.writerow([
                     r.get("Name", ""),
                     r.get("Num of Disc", ""),
                     r.get("Move", ""),
                     r.get("Breaking rules", 0),
+                    r.get("Pressure", ""),
                     r.get("Timer", ""),
                     r.get("Remaining time", ""),
-                    r.get("Time spent", "")
+                    self._get_time_spent_display(r),
+                    r.get("Time spent(ms)", "")
                 ])
         messagebox.showinfo("Exported", f"ส่งออก CSV สำเร็จ:\n{path}")
 
@@ -621,7 +739,7 @@ class HanoiGUI:
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Hanoi Stats"
-        headers = ["Name", "Num of Disc", "Move", "Breaking rules", "Timer", "Remaining time", "Time spent"]
+        headers = ["Name", "Num of Disc", "Move", "Breaking rules", "Pressure", "Timer", "Remaining time", "Time spent", "Time spent (ms)"]
         ws.append(headers)
         for r in self.records:
             ws.append([
@@ -629,9 +747,11 @@ class HanoiGUI:
                 r.get("Num of Disc", ""),
                 r.get("Move", ""),
                 r.get("Breaking rules", 0),
+                r.get("Pressure", ""),
                 r.get("Timer", ""),
                 r.get("Remaining time", ""),
-                r.get("Time spent", "")
+                self._get_time_spent_display(r),
+                r.get("Time spent(ms)", "")
             ])
         bold = Font(bold=True)
         for c, _h in enumerate(headers, start=1):
@@ -680,7 +800,7 @@ class HanoiGUI:
         self._snap_disc_to_peg(disc, dst)
         self.moves += 1
         self._update_moves()
-        self.canvas.after(120, lambda: self._animate_moves(moves, idx+1))
+        self.canvas.after(600, lambda: self._animate_moves(moves, idx+1))
 
 
 if __name__ == "__main__":
